@@ -185,6 +185,9 @@ static inline A2DynamicDelegate *getDynamicDelegate(NSObject *delegatingObject, 
 	if (bk_object_isKindOfClass(originalDelegate, A2DynamicDelegate.class)) { return dynamicDelegate; }
 
 	void (*setterDispatch)(id, SEL, id) = (void (*)(id, SEL, id)) objc_msgSend;
+    // 相当于调用 [self a2_SetDelegate:dynamicDelegate]。
+    // info->a2_setter ?:info->setter 是info->a2_setter ? info->a2_setter : info->setter偷懒的写法。前者条件成立是相当于是空操作，结果就为三目表达式的结果就为条件判断的结果。于是就调用a2_setter，设置真正的代理。
+    // 动态调用setter，在注册动态代理是已将系统的setter实现与a2_setter实现交换了。这里的逻辑就是delegatingObject.delegate = dynamicDelegate
 	setterDispatch(delegatingObject, info->a2_setter ?: info->setter, dynamicDelegate);
 
 	return dynamicDelegate;
@@ -273,10 +276,12 @@ typedef A2DynamicDelegate *(^A2GetDynamicDelegateBlock)(NSObject *, BOOL);
 			return [delegate blockImplementationForMethod:selector];
 		});
 
+        // 动态添加 @dynamic 修饰的属性的 getter 方法实现。
 		if (!class_addMethod(self, getter, getterImplementation, "@@:")) {
 			NSCAssert(NO, @"Could not implement getter for \"%@\" property.", propertyName);
 		}
 
+        // // 动态添加 @dynamic 修饰的属性的 setter 方法实现。
 		IMP setterImplementation = imp_implementationWithBlock(^(NSObject *delegatingObject, id block) {
 			A2DynamicDelegate *delegate = getDynamicDelegate(delegatingObject, protocol, info, YES);
 			[delegate implementMethod:selector withBlock:block];
@@ -328,6 +333,7 @@ typedef A2DynamicDelegate *(^A2GetDynamicDelegateBlock)(NSObject *, BOOL);
 	infoAsPtr = (__bridge void *)[propertyMap objectForKey:protocol];
 
 	IMP setterImplementation = imp_implementationWithBlock(^(NSObject *delegatingObject, id delegate) {
+        // 设置代理。
 		A2DynamicDelegate *dynamicDelegate = getDynamicDelegate(delegatingObject, protocol, infoAsPtr, YES);
 		if ([delegate isEqual:dynamicDelegate]) {
 			delegate = nil;
@@ -335,6 +341,7 @@ typedef A2DynamicDelegate *(^A2GetDynamicDelegateBlock)(NSObject *, BOOL);
 		dynamicDelegate.realDelegate = delegate;
 	});
 
+    // 方法交换 setDelegate: 方法。
 	if (!swizzleWithIMP(self, setter, a2_setter, setterImplementation, "v@:@", YES)) {
 		bzero(infoAsPtr, sizeof(A2BlockDelegateInfo));
 		return;
